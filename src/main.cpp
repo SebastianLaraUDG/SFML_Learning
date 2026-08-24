@@ -3,6 +3,7 @@
 #include <array>
 #include <string>
 #include <stdint.h>
+
 using u8 = uint8_t;
 using u32 = uint32_t;
 using i32 = int32_t;
@@ -32,8 +33,12 @@ public:
 
 	
 	// Add a chip to the bottom of this column, if possible. If the column is full, do nothing.
+	// @param chipPosition - The position of the chip to add. This is used to determine which column to add the chip to.
+	// @param colorToInsert - The color of the chip to add.
+	// @param outRowIndex - The row index of the chip that was added. This is an output parameter.
+	// @param outColumnIndex - The column index of the chip that was added. This is an output parameter.
 	// @returns true if the chip was added, false if the column is full.
-	bool AddChip(const sf::Vector2f& chipPosition, const EPlayerChip colorToInsert)
+	bool AddChip(const sf::Vector2f& chipPosition, const EPlayerChip colorToInsert, i32& outRowIndex, i32& outColumnIndex)
 	{
 		// Convert the chip position to a column index.
 		// Then after getting the column index, check if the column is full. If it is not full, find the lowest empty slot in that column and fill it with the chip color.
@@ -60,11 +65,116 @@ public:
 			{
 				// If the column has empty slots, fill the lowest empty slot with the chip color.
 				grids_[row][column] = (colorToInsert == EPlayerChip::P1) ? EBoardSlotStatus::Filled_P1 : EBoardSlotStatus::Filled_P2;
+				outRowIndex = row;
+				outColumnIndex = column;
 				return true;
 			}
 		}
 		return false;
 	}
+
+	// Returns true if the player has won, false otherwise.
+	bool CheckVictory(const EPlayerChip& possibleWinner, const i32 rowIndex, const i32 columnIndex) const
+	{
+		// You'll see all values are initialized to 1, this is because we are assuming that the chip that was just placed
+		// is already counted as 1 in the sequence. So we start counting from 1 and then check in all directions for additional chips of the same type.
+
+
+		EBoardSlotStatus typeToEval = possibleWinner == EPlayerChip::P1 ? EBoardSlotStatus::Filled_P1 : EBoardSlotStatus::Filled_P2;
+		
+		// Vertical check.
+		i32 columnAccum = 1;
+
+		for (i32 row = rowIndex + 1; row < GRID_HEIGHT; ++row)
+		{
+			if (grids_[row][columnIndex] != typeToEval)
+			{
+				break;
+			}
+			columnAccum++;
+			if (columnAccum >= 4)
+			{
+				return true;
+			}
+		}
+
+		// Check horizontal (left and right).
+		i32 rowAccum = 1;
+		i32 leftColumn = columnIndex - 1;
+		i32 rightColumn = columnIndex + 1;
+		// Check left.
+		while (leftColumn >= 0 && grids_[rowIndex][leftColumn] == typeToEval)
+		{
+			leftColumn--;
+			rowAccum++;
+		}
+		// Check right.
+		while (rightColumn < GRID_WIDTH && grids_[rowIndex][rightColumn] == typeToEval)
+		{
+			rightColumn++;
+			rowAccum++;
+		}
+		if (rowAccum >= 4)
+		{
+			return true;
+		}
+
+
+		// Check diagonal ↖↘ (up-left and down-right).
+		i32 diagonalAccum1 = 1;
+		i32 upLeftRow = rowIndex - 1;
+		i32 upLeftColumn = columnIndex - 1;
+		i32 downRightRow = rowIndex + 1;
+		i32 downRightColumn = columnIndex + 1;
+
+		// Check up-left.
+		while (upLeftRow >= 0 && upLeftColumn >= 0 && grids_[upLeftRow][upLeftColumn] == typeToEval)
+		{
+			upLeftRow--;
+			upLeftColumn--;
+			diagonalAccum1++;
+		}
+		// Check down-right.
+		while (downRightRow < GRID_HEIGHT && downRightColumn < GRID_WIDTH && grids_[downRightRow][downRightColumn] == typeToEval)
+		{
+			downRightRow++;
+			downRightColumn++;
+			diagonalAccum1++;
+		}
+		if (diagonalAccum1 >= 4)
+		{
+			return true;
+		}
+
+		// Check diagonal ↗↙ (up-right and down-left).
+		i32 diagonalAccum2 = 1;
+		i32 upRightRow = rowIndex - 1;
+		i32 upRightColumn = columnIndex + 1;
+		i32 downLeftRow = rowIndex + 1;
+		i32 downLeftColumn = columnIndex - 1;
+
+		// Check up-right.
+		while (upRightRow >= 0 && upRightColumn < GRID_WIDTH && grids_[upRightRow][upRightColumn] == typeToEval)
+		{
+			upRightRow--;
+			upRightColumn++;
+			diagonalAccum2++;
+		}
+		// Check down-left.
+		while (downLeftRow < GRID_HEIGHT && downLeftColumn >= 0 && grids_[downLeftRow][downLeftColumn] == typeToEval)
+		{
+			downLeftRow++;
+			downLeftColumn--;
+			diagonalAccum2++;
+		}
+		if (diagonalAccum2 >= 4)
+		{
+			return true;
+		}
+
+		return false;
+	}
+
 
 	void Draw(sf::RenderWindow* const window, const sf::Texture& p1Texture, const sf::Texture& p2Texture, sf::Sprite& chip) const
 	{
@@ -184,7 +294,7 @@ static void SwitchPlayerTurn(EPlayerChip& playerInTurn, sf::Sprite& currentChip,
 	}
 }
 
-static void handlePlayerInput(sf::Keyboard::Scancode scancode, sf::Sprite& chip, const sf::Texture& greenTexture, const sf::Texture& pinkTexture, const f32 boardWidth, Board& board, EPlayerChip& colorToInsert)
+static void handlePlayerInput(sf::Keyboard::Scancode scancode, sf::Sprite& chip, const sf::Texture& greenTexture, const sf::Texture& pinkTexture, const f32 boardWidth, Board& board, EPlayerChip& colorToInsert, bool& bWinner, sf::Text& winnerText)
 {
 	using SCode = sf::Keyboard::Scancode;
 	switch (scancode)
@@ -196,9 +306,23 @@ static void handlePlayerInput(sf::Keyboard::Scancode scancode, sf::Sprite& chip,
 		MovePreviewChip(chip, 1, boardWidth);
 		break;
 	case SCode::Down:
-		if (board.AddChip(chip.getPosition(), colorToInsert))
+		i32 outRowIndex, outColumnIndex;
+		if (board.AddChip(chip.getPosition(), colorToInsert, outRowIndex, outColumnIndex))
 		{
-			SwitchPlayerTurn(colorToInsert, chip, greenTexture, pinkTexture);
+			if(board.CheckVictory(colorToInsert, outRowIndex, outColumnIndex))
+			{
+				bWinner = true;
+				winnerText.setString("Player " + std::to_string((colorToInsert == EPlayerChip::P1) ? 1 : 2) + " wins!");
+				winnerText.setCharacterSize(48);
+				winnerText.setOrigin({ winnerText.getLocalBounds().size.x / 2.f, winnerText.getLocalBounds().size.y / 2.f });
+				winnerText.setPosition({ boardWidth / 2.f, static_cast<f32>(winnerText.getCharacterSize()) });
+				winnerText.setFillColor(colorToInsert == EPlayerChip::P1 ? sf::Color::Green : sf::Color::Red);
+			}
+			else
+			{
+				SwitchPlayerTurn(colorToInsert, chip, greenTexture, pinkTexture);
+				chip.setPosition({ boardWidth / 2.f, chip.getPosition().y }); // Reset preview chip to center after placing a chip.})
+			}
 		}
 		break;
 	}
@@ -231,6 +355,10 @@ int main()
 	
 
 	const f32 boardWidth = static_cast<f32>(window.getSize().x);
+
+	bool bWinner = false;
+	sf::Font winnerFont("Assets/LouisGeorgeCafe.ttf");
+	sf::Text winnerText(winnerFont);
 	
 	while ( window.isOpen() )
 	{
@@ -247,7 +375,8 @@ int main()
 				{
 					window.close();
 				}
-				handlePlayerInput(key->scancode, currentChip, chipGreenTex, chipPinkTex, boardWidth, board, playerInTurn);
+				if(!bWinner)
+				handlePlayerInput(key->scancode, currentChip, chipGreenTex, chipPinkTex, boardWidth, board, playerInTurn, bWinner, winnerText);
 				
 			}
 			// if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>())
@@ -260,6 +389,10 @@ int main()
 		
 		board.Draw(&window, chipGreenTex, chipPinkTex, currentChip);
 		window.draw(currentChip);
+		if (bWinner)
+		{
+			window.draw(winnerText);
+		}
 		
 		window.display();
 	}
