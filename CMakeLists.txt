@@ -14,6 +14,12 @@ FetchContent_Declare(SFML
 FetchContent_MakeAvailable(SFML)
 
 add_executable(main src/main.cpp)
+if(WIN32)
+    set_target_properties(main PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release>)
+    if(MSVC)
+        target_link_options(main PRIVATE $<$<CONFIG:Release>:/ENTRY:mainCRTStartup>)
+    endif()
+endif()
 target_compile_features(main PRIVATE cxx_std_20)
 target_link_libraries(main PRIVATE SFML::Graphics)
 
